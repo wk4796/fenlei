@@ -13,16 +13,12 @@ if [ ! -d "$TARGET_DIR" ]; then
 fi
 
 # 1. 声明一个关联数组 (哈希表)
-#    键 (Key)   : 提取到的标签 (e.g., "bbb" 或 "aaa")
-#    值 (Value) : 一个用换行符(\n)分隔的、包含所有匹配文件路径的字符串
 declare -A file_map
 
 echo "（第1轮）正在扫描目标目录并建立索引..."
 echo "目标: $TARGET_DIR"
 
 # 遍历 *指定目录* 下所有符合 '[*]*. ' 模式的文件
-# 注意: 'for file_path in "$TARGET_DIR"/\[*\].*;' 这个模式本身就是一种过滤
-# 它只查找那些以 '[' 开头的文件
 for file_path in "$TARGET_DIR"/\[*\].*; do
     
     # 关键检查: 只处理常规文件, 跳过文件夹
@@ -33,16 +29,11 @@ for file_path in "$TARGET_DIR"/\[*\].*; do
 
     # =========================================================================
     # 规则 1: 优先匹配 [aaa(bbb)] 格式, 提取 bbb
-    # sed -n 's/^\[.../\2/p'
-    #             ^--- 锚定在开头
-    # \([^()\]*\) : 捕获 aaa (组1)
-    # \([^)]*\)   : 捕获 bbb (组2)
+    # 必须以 [ 开头 (^)
     tag=$(echo "$filename" | sed -n 's/^\[\([^()\]*\)(\([^)]*\))[^]]*\].*/\2/p')
     
-    # 规则 2: 如果规则 1 没匹配到 (即 $tag 为空), 则匹配 [aaa] 格式, 提取 aaa
-    # sed -n 's/^\[.../\1/p'
-    #             ^--- 锚定在开头
-    # \([^]]*\)   : 捕获 aaa (组1)
+    # 规则 2: 如果规则 1 没匹配到, 则匹配 [aaa] 格式, 提取 aaa
+    # 必须以 [ 开头 (^)
     if [ -z "$tag" ]; then
         tag=$(echo "$filename" | sed -n 's/^\[\([^]]*\)\].*/\1/p')
     fi
@@ -51,7 +42,6 @@ for file_path in "$TARGET_DIR"/\[*\].*; do
     # 如果成功提取到标签
     if [ -n "$tag" ]; then
         # 将此文件的完整路径追加到该标签的“列表”中
-        # 我们用 \n 换行符作为分隔符
         existing_files=${file_map["$tag"]}
         if [ -z "$existing_files" ]; then
             file_map["$tag"]="$file_path"
@@ -68,14 +58,13 @@ moved_count=0
 # 声明一个数组来跟踪未处理的标签
 declare -a unprocessed_tags
 
-# 遍历所有被索引的标签 (即 file_map 的所有 "key")
+# 遍历所有被索引的标签
 for tag in "${!file_map[@]}"; do
     
-    # 读取该标签对应的所有文件路径 (这是一个用 \n 分隔的字符串)
+    # 读取该标签对应的所有文件路径
     file_list_str=${file_map["$tag"]}
     
     # 将这个字符串读入一个真正的 bash 数组 `files` 中
-    # 这样可以正确处理带空格的文件名
     IFS=$'\n' read -r -d '' -a files < <(printf '%s\0' "$file_list_str")
     
     # 获取文件数量
@@ -84,10 +73,16 @@ for tag in "${!file_map[@]}"; do
     # 检查数量是否大于等于2
     if [ "$count" -ge 2 ]; then
         
-        # 创建的目标文件夹路径
+        # 目标文件夹路径
         DEST_FOLDER="$TARGET_DIR/$tag"
-        echo "创建文件夹: $DEST_FOLDER (共 $count 个文件)"
+        
+        # *** 优化点 ***
+        # 使用 mkdir -p 确保目标文件夹存在
+        # -p 选项特性: 如果文件夹已存在, 会静默跳过, 不会报错
         mkdir -p "$DEST_FOLDER"
+        
+        # 将提示语修改为 "处理文件夹" 更为准确
+        echo "处理文件夹: $DEST_FOLDER (共 $count 个文件)"
         
         # 遍历这个数组并移动所有文件
         for file_to_move in "${files[@]}"; do
