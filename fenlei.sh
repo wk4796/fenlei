@@ -1,3 +1,4 @@
+cat > ~/fenlei.sh << 'EOF'
 #!/bin/bash
 
 # ==========================================================
@@ -26,26 +27,37 @@ for file_path in "$TARGET_DIR"/\[*\].*; do
     
     # 从完整路径中提取文件名
     filename=$(basename "$file_path")
+    
+    # 初始化 $tag
+    tag=""
 
     # =========================================================================
-    # 规则 1: 优先匹配 [aaa(bbb)] 格式, 提取 bbb
-    # 必须以 [ 开头 (^)
-    tag=$(echo "$filename" | sed -n 's/^\[\([^()\]*\)(\([^)]*\))[^]]*\].*/\2/p')
-    
-    # 规则 2: 如果规则 1 没匹配到, 则匹配 [aaa] 格式, 提取 aaa
-    # 必须以 [ 开头 (^)
-    #
-    # *** 这是关键的修正点 ***
-    # 这里的 \([^]]*\) 意思是 "捕获方括号内除 ']' 之外的所有内容"
-    # 这会正确捕获 [ちょびぺろ] 中的 "ちょびぺろ"
-    # 并且会 *忽略* 文件名后面出现的 (はつもの果実)
-    #
-    if [ -z "$tag" ]; then
-        tag=$(echo "$filename" | sed -n 's/^\[\([^]]*\)\].*/\1/p')
+    # 核心提取逻辑 (V8 - 最终修正版)
+    # =========================================================================
+
+    # 步骤 1: 绝对严格地只提取 *第一个* [ ... ] 之间的内容
+    # *** 修正(V8): 移除此处的引号, 否则 Bash 会把它当作
+    #     一个"字符串"而不是"正则表达式", 导致0匹配 ***
+    if [[ "$filename" =~ ^\[([^]]+)\] ]]; then
+        
+        # inner_content 现在是 "aaa(bbb)" 或者 "aaa"
+        inner_content="${BASH_REMATCH[1]}"
+        
+        # 步骤 2: 检查这个 inner_content 是否包含 (bbb) 格式
+        # *** 修正(V7): 保留此处的引号, 
+        #     防止 Bash 报错 "unexpected token `)`" ***
+        if [[ "$inner_content" =~ "\(([^)]+)\)" ]]; then
+            # 规则 1 命中: 提取 (bbb)
+            tag="${BASH_REMATCH[1]}"
+        else
+            # 规则 2 命中: 使用 "aaa"
+            tag="$inner_content"
+        fi
     fi
     # =========================================================================
 
-    # 如果成功提取到标签
+
+    # 如果成功提取到标签 ( "bbb" 或 "aaa" )
     if [ -n "$tag" ]; then
         # 将此文件的完整路径追加到该标签的“列表”中
         existing_files=${file_map["$tag"]}
@@ -83,7 +95,6 @@ for tag in "${!file_map[@]}"; do
         DEST_FOLDER="$TARGET_DIR/$tag"
         
         # 使用 mkdir -p 确保目标文件夹存在
-        # (如果已存在, 会静默跳过)
         mkdir -p "$DEST_FOLDER"
         
         # 提示语
@@ -93,8 +104,14 @@ for tag in "${!file_map[@]}"; do
         for file_to_move in "${files[@]}"; do
             filename_to_move=$(basename "$file_to_move")
             echo "  -> 移动 $filename_to_move 到 $DEST_FOLDER/"
+            
+            # 移动文件, 并检查错误
             mv -- "$file_to_move" "$DEST_FOLDER/"
-            ((moved_count++))
+            if [ $? -ne 0 ]; then
+                echo "  !!!! 错误: 移动 $filename_to_move 失败 (可能是I/O错误或Rclone挂载已掉线) !!!!"
+            else
+                ((moved_count++))
+            fi
         done
         
     else
@@ -117,3 +134,4 @@ else
         echo "  - $item"
     done
 fi
+EOF
