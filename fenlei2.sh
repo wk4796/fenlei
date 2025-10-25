@@ -1,7 +1,8 @@
-cat > ~/fenlei.sh << 'EOF'
 #!/bin/bash
-# [V18 修改] 彻底移除了 'set -e'
-# 脚本现在将依赖内置的错误检查，以防止 I/O 错误导致脚本异常退出。
+# [V22 修改] 修复 RE_MAIN 中致命的 $ 锚点 BUG，使其能正确匹配带扩展名的文件。
+# [V21 修改] 修复 for 循环，使其能同时匹配半角 [ 和全角 ［ 开头的文件。
+# [V20 修改] 增强 sed 净化逻辑，在处理非法字符前，先移除 tag 的前导/尾随空格。
+# [V19 修改] 升级正则表达式，支持中英文全/半角括号并处理空格。
 
 # ==========================================================
 # 脚本全局配置
@@ -10,10 +11,15 @@ cat > ~/fenlei.sh << 'EOF'
 MIN_FILES_FOR_NEW_DIR=2
 
 # ==========================================================
-# 核心正则表达式 (V9)
+# 核心正则表达式 (V22)
 # ==========================================================
-RE_STEP_1='^\[([^]]+)\]'     # 匹配 [aaa] 或 [aaa(bbb)]
-RE_STEP_2='\(([^)]+)\)'     # 匹配 (bbb)
+# RE_MAIN: 匹配 [aaa (bbb)] 或 [ccc] 及其全角/半角变体
+# 支持 [ aaa ( bbb ) ] 或 ［aaa（bbb）］ 这样的格式
+#
+# 捕获组 1: (.*?) -> "作者" (例如: aaa)
+# 捕获组 3: ([^）)]+) -> "标题/Piro" (例如: bbb)
+# [V22] 移除了末尾的 $，以允许匹配 .zip, .cbz 等扩展名
+RE_MAIN='^[\[［][[:space:]]*(.*?)[[:space:]]*([（(][[:space:]]*([^）)]+)[[:space:]]*[)）])?[[:space:]]*[\]］]'
 
 # ==========================================================
 # 辅助函数
@@ -37,6 +43,7 @@ show_usage() {
     echo "用法: $0 [选项] [目标目录]"
     echo ""
     echo "一个根据文件名 [作者(Piro)] 或 [作者] 模式自动分类漫画的脚本。"
+    echo "支持全角/半角括号，例如：[aaa (bbb)] 和 ［aaa（bbb）］"
     echo ""
     echo "如果未提供 [目标目录]，脚本将以交互模式启动。"
     echo ""
@@ -46,7 +53,7 @@ show_usage() {
 }
 
 # ==========================================================
-# 核心处理函数 (V18 逻辑)
+# 核心处理函数 (V22 逻辑)
 # ==========================================================
 process_directory() {
     local TARGET_DIR="$1"
@@ -62,26 +69,43 @@ process_directory() {
     log_info "（第1轮）正在扫描目标目录并建立索引..."
     log_info "目标: $TARGET_DIR"
 
-    for file_path in "$TARGET_DIR"/\[*\].*; do
+    # [V21] 修复:
+    # 循环现在查找以半角 [ 或全角 ［ 开头的文件
+    for file_path in "$TARGET_DIR"/\[*\].* "$TARGET_DIR"/［*\].*; do
+        # [ -f ] 检查是必须的，如果某个模式 (例如 ［*\].*) 没匹配到文件, 
+        # Bash 会把通配符本身 (如 "DIR/［*\].*") 传入循环, [ -f ] 会将其过滤掉。
         [ -f "$file_path" ] || continue
+        
         filename=$(basename "$file_path")
         tag=""
 
-        # 步骤 1: 提取 [ ... ] 之间的内容
-        if [[ "$filename" =~ $RE_STEP_1 ]]; then
-            inner_content="${BASH_REMATCH[1]}"
-            
-            # 步骤 2: 检查是否包含 (bbb)
-            if [[ "$inner_content" =~ $RE_STEP_2 ]]; then
-                tag="${BASH_REMATCH[1]}" # 规则 1: 提取 (bbb)
+        # [V19] 步骤 1: 使用 RE_MAIN 一次性解析文件名
+        # $RE_MAIN 会匹配 [aaa] 或 [aaa (bbb)] 及其全/半角变体
+        if [[ "$filename" =~ $RE_MAIN ]]; then
+            local author="${BASH_REMATCH[1]}" # 捕获组 1: [aaa] (作者)
+            local title="${BASH_REMATCH[3]}"  # 捕获组 3: (bbb) (标题/Piro)
+
+            # 规则: 优先使用 (title)，如果不存在，则使用 [author]
+            if [ -n "$title" ]; then
+                tag="$title" # 规则 1: 提取 (bbb)
             else
-                tag="$inner_content" # 规则 2: 使用 "aaa"
+                tag="$author" # 规则 2: 使用 "aaa"
             fi
         fi
-
+        
         # 步骤 3: 净化 "tag" (文件夹名称)
         if [ -n "$tag" ]; then
-            tag=$(echo "$tag" | sed -e 's|[/\\:*"<>|]||g' -e 's/\.*$//' -e 's/^\.*//')
+            # [V20] 优化:
+            # 1. 移除前导空格
+            # 2. 移除尾随空格
+            # 3. 移除非法字符 ( / \ : * " < > | )
+            # 4. 移除尾随的点 (.)
+            # 5. 移除前导的点 (.)
+            tag=$(echo "$tag" | sed -e 's/^[[:space:]]*//' \
+                                  -e 's/[[:space:]]*$//' \
+                                  -e 's|[/\\:*"<>|]||g' \
+                                  -e 's/\.*$//' \
+                                  -e 's/^\.*//')
         fi
 
         if [ -n "$tag" ]; then
@@ -255,7 +279,7 @@ main() {
             if [ -z "$TARGET_DIR" ]; then
                 log_error "路径不能为空，请重新输入:"
             elif [ ! -d "$TARGET_DIR" ]; then
-                log_error "错误: 目标目录不存在!"
+                log_error "错误: M目标目录不存在!"
                 log_error "请检查路径: $TARGET_DIR (或重新输入)"
             else
                 # 路径有效, 退出循环
@@ -277,4 +301,3 @@ main() {
 
 # 启动脚本
 main "$@"
-EOF
