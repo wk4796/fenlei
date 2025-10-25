@@ -45,7 +45,7 @@ show_usage() {
 }
 
 # ==========================================================
-# 核心处理函数 (V12 逻辑)
+# 核心处理函数 (V15 逻辑)
 # ==========================================================
 process_directory() {
     local TARGET_DIR="$1"
@@ -78,7 +78,7 @@ process_directory() {
             fi
         fi
 
-        # 步骤 3: 净化 "tag" (文件夹名称), 移除所有无效字符
+        # 步骤 3: 净化 "tag" (文件夹名称)
         if [ -n "$tag" ]; then
             tag=$(echo "$tag" | sed -e 's|[/\\:*"<>|]||g' -e 's/\.*$//' -e 's/^\.*//')
         fi
@@ -98,6 +98,11 @@ process_directory() {
 
     local moved_count=0
     declare -a unprocessed_tags
+    
+    # [新功能 V15 - 方案一] 初始化报告数组
+    declare -a CREATED_DIRS=()
+    declare -a UPDATED_DIRS=()
+    declare -a SKIPPED_FILES=()
 
     for tag in "${!file_map[@]}"; do
         
@@ -115,8 +120,12 @@ process_directory() {
 
             if [ "$count" -ge $MIN_FILES_FOR_NEW_DIR ] && [ "$mkdir_needed" == "true" ]; then
                 echo "处理新文件夹: $DEST_FOLDER (共 $count 个文件)"
+                # [新功能 V15 - 方案一] 记录新创建的目录
+                CREATED_DIRS+=("$tag")
             else
                 echo "归档到已有文件夹: $DEST_FOLDER (共 $count 个文件)"
+                # [新功能 V15 - 方案一] 记录被更新的目录
+                UPDATED_DIRS+=("$tag")
             fi
 
             if [ "$mkdir_needed" == "true" ]; then
@@ -127,20 +136,33 @@ process_directory() {
                 fi
             fi
             
+            # [新功能 V15 - 方案二] 安全移动逻辑
             for file_to_move in "${files[@]}"; do
                 local filename_to_move=$(basename "$file_to_move")
+                local dest_file_path="$DEST_FOLDER/$filename_to_move"
                 
-                if [ "$IS_DRY_RUN" == "true" ]; then
-                    log_dryrun "  -> 移动 $filename_to_move 到 $DEST_FOLDER/"
-                    ((moved_count++))
-                else
-                    echo "  -> 移动 $filename_to_move 到 $DEST_FOLDER/"
-                    mv -- "$file_to_move" "$DEST_FOLDER/"
-                    if [ $? -ne 0 ]; then
-                        echo "  !!!! 错误: 移动 $filename_to_move 失败 (可能是I/O错误) !!!!"
+                # 检查目标文件是否已存在
+                if [ -f "$dest_file_path" ]; then
+                    # 如果已存在, 则跳过 (方案二), 并记录 (方案一)
+                    if [ "$IS_DRY_RUN" == "true" ]; then
+                        log_dryrun "  -> 跳过 $filename_to_move (目标已存在)"
                     else
-                        ((moved_count++))
+                        echo "  -> 跳过 $filename_to_move (目标已存在)"
                     fi
+                    SKIPPED_FILES+=("$filename_to_move")
+                else
+                    # 目标不存在, 安全, 执行移动
+                    if [ "$IS_DRY_RUN" == "true" ]; then
+                        log_dryrun "  -> 移动 $filename_to_move 到 $DEST_FOLDER/"
+                    else
+                        echo "  -> 移动 $filename_to_move 到 $DEST_FOLDER/"
+                        mv -- "$file_to_move" "$DEST_FOLDER/"
+                        if [ $? -ne 0 ]; then
+                            echo "  !!!! 错误: 移动 $filename_to_move 失败 (可能是I/O错误) !!!!"
+                        fi
+                    fi
+                    # 只有真正移动(或准备移动)的文件才计数
+                    ((moved_count++))
                 fi
             done
             
@@ -152,19 +174,36 @@ process_directory() {
     echo "------------------------------"
     log_info "操作完成。共移动 $moved_count 个文件。"
 
-    echo "---"
-    echo "以下标签因文件数量不足($MIN_FILES_FOR_NEW_DIR)个且文件夹不存在而未被处理:"
-    if [ ${#unprocessed_tags[@]} -eq 0 ]; then
-        echo "  (无)"
+    # [新功能 V15 - 方案一] 增强的最终报告
+    echo ""
+    echo -e "${BLUE}--- 总结报告 ---${NC}"
+    
+    if [ ${#CREATED_DIRS[@]} -gt 0 ]; then
+        echo -e "${GREEN}[+] 新创建的文件夹 (${#CREATED_DIRS[@]} 个):${NC}"
+        printf "  - %s\n" "${CREATED_DIRS[@]}"
+    fi
+    
+    if [ ${#UPDATED_DIRS[@]} -gt 0 ]; then
+        echo -e "${GREEN}[~] 归档到已有文件夹 (${#UPDATED_DIRS[@]} 个):${NC}"
+        printf "  - %s\n" "${UPDATED_DIRS[@]}"
+    fi
+
+    if [ ${#SKIPPED_FILES[@]} -gt 0 ]; then
+        echo -e "${YELLOW}[!] 因目标已存在而跳过的文件 (${#SKIPPED_FILES[@]} 个):${NC}"
+        printf "  - %s\n" "${SKIPPED_FILES[@]}"
+    fi
+
+    if [ ${#unprocessed_tags[@]} -gt 0 ]; then
+        echo -e "${RED}[!] 未处理的标签 (${#unprocessed_tags[@]} 个):${NC}"
+        printf "  - %s\n" "${unprocessed_tags[@]}"
     else
-        for item in "${unprocessed_tags[@]}"; do
-            echo "  - $item"
-        done
+        echo -e "${RED}[!] 未处理的标签 (0 个):${NC}"
+        echo "  - (无)"
     fi
 }
 
 # ==========================================================
-# 脚本主入口 (V14 修改)
+# 脚本主入口 (V14 逻辑)
 # ==========================================================
 main() {
     local TARGET_DIR=""
@@ -198,7 +237,7 @@ main() {
         esac
     done
 
-    # --- [V14 修改] 交互式输入 (循环验证) ---
+    # --- 交互式输入 (循环验证) ---
     if [ -z "$TARGET_DIR" ]; then
         echo -e "${GREEN}=== 漫画分类脚本 (交互模式) ===${NC}"
         echo -e "未指定目标目录。"
@@ -220,7 +259,6 @@ main() {
     fi
 
     # --- 检查路径 (此检查现在只对 *参数模式* 有效) ---
-    # (交互模式已在上面的 while 循环中验证)
     if [ ! -d "$TARGET_DIR" ]; then
         log_error "错误: 目标目录不存在!"
         log_error "请检查路径: $TARGET_DIR"
