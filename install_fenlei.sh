@@ -30,9 +30,9 @@ main() {
         return 1
     fi
 
-    # 检查占位符 URL 是否已被修改
-    if [[ "$SOURCE_URL" == *"YOUR_USERNAME"* || "$SOURCE_URL" == *"YOUR_REPO"* ]]; then
-        echo -e "${RED}错误：请先修改此安装脚本中的 SOURCE_URL，将其指向您 GitHub 上的 fenlei.sh Raw 链接。${NC}"
+    # 检查占位符 URL 是否已被修改 (如果您 fork 了脚本)
+    if [[ "$SOURCE_URL" == *"YOUR_USERNAME"* || "$SOURCE_URL" == *"YOUR_REPO"* ]] && [[ "$SOURCE_URL" != *"wk4796/fenlei"* ]]; then
+        echo -e "${RED}错误：如果您 fork 了仓库，请修改此安装脚本中的 SOURCE_URL，将其指向您 GitHub 上的 fenlei.sh Raw 链接。${NC}"
         return 1
     fi
 
@@ -105,20 +105,22 @@ main() {
     # (只有用 source 运行此脚本时才有效)
     eval "alias fenlei='${DEST_PATH}'"
 
-    # 6. 最终提示并自动运行
+    # 6. 最终提示 (已修改)
     echo ""
     echo -e "${GREEN}================================================================${NC}"
     echo -e "${GREEN}🎉 恭喜！脚本已安装并激活！${NC}"
     echo ""
     echo -e "别名 'fenlei' 已在当前终端中生效（如果使用 source 运行）。"
     echo -e "下次登录时，您可以直接使用 'fenlei' 命令。"
-    echo -e "现在将为您自动启动 ${YELLOW}fenlei.sh${NC} ..."
+    echo -e "正在尝试自动启动 ${YELLOW}fenlei.sh${NC} ..."
+    # *** 新增提示 ***
+    echo -e "${YELLOW}如果脚本未自动弹出交互界面，请手动输入 'fenlei' 命令运行。${NC}"
+    # *** 结束新增 ***
     echo -e "${GREEN}================================================================${NC}"
     echo ""
 
-    # 7. 自动运行 fenlei.sh
-    # 直接使用完整路径执行，确保能找到
-    "${DEST_PATH}"
+    # 7. 自动运行 fenlei.sh (可能会因 read 问题静默失败)
+    fenlei
 }
 
 # 执行主函数
