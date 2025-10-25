@@ -9,7 +9,8 @@ SOURCE_URL="https://raw.githubusercontent.com/wk4796/fenlei/main/fenlei.sh"
 # !!! 重要: 请将上面的 URL 替换为您自己 GitHub 仓库中 fenlei.sh 的 Raw 链接 !!!
 
 DEST_FILE="fenlei.sh"
-DEST_PATH="$HOME/${DEST_FILE}" # 安装到 $HOME 目录
+# [恢复] 安装路径改回当前目录 (pwd)
+DEST_PATH="$(pwd)/${DEST_FILE}"
 
 # --- 颜色定义 ---
 RED='\033[0;31m'
@@ -38,7 +39,7 @@ main() {
 
     echo -e "${GREEN}=== 开始安装漫画分类脚本 (fenlei.sh) ===${NC}"
 
-    # 1. 下载脚本
+    # 1. 下载脚本到当前目录
     echo -e "${YELLOW}正在从 GitHub 下载脚本到: ${CYAN}${DEST_PATH}${NC}"
     if ! ${DOWNLOADER} "${SOURCE_URL}" > "${DEST_PATH}"; then
         echo -e "${RED}下载失败！请检查您的网络连接或 SOURCE_URL 是否正确。${NC}"
@@ -80,7 +81,7 @@ main() {
     if [ -n "$PROFILE_FILE" ]; then
         echo -e "检测到您正在使用 ${SHELL_TYPE}，将修改配置文件: ${CYAN}${PROFILE_FILE}${NC}"
 
-        # 4. 创建别名命令
+        # 4. 创建别名命令 (别名仍为 fenlei, 但路径现在是基于 pwd 的)
         ALIAS_CMD="alias fenlei='${DEST_PATH}'"
 
         if grep -qF -- "${ALIAS_CMD}" "${PROFILE_FILE}"; then
@@ -105,7 +106,7 @@ main() {
     # (只有用 source 运行此脚本时才有效)
     eval "alias fenlei='${DEST_PATH}'"
 
-    # 6. 最终提示 (已修改)
+    # 6. 最终提示 (包含黄色警告)
     echo ""
     echo -e "${GREEN}================================================================${NC}"
     echo -e "${GREEN}🎉 恭喜！脚本已安装并激活！${NC}"
