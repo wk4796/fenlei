@@ -5,11 +5,11 @@ set -e # 任何命令失败立即退出
 # ==========================================================
 # 脚本全局配置
 # ==========================================================
-# 核心逻辑配置
+# 核心逻辑配置: 必须满 N 个文件才会创建 *新* 文件夹
 MIN_FILES_FOR_NEW_DIR=2
 
 # ==========================================================
-# 核心正则表达式 (保持不变)
+# 核心正则表达式 (V9)
 # ==========================================================
 RE_STEP_1='^\[([^]]+)\]'     # 匹配 [aaa] 或 [aaa(bbb)]
 RE_STEP_2='\(([^)]+)\)'     # 匹配 (bbb)
@@ -45,7 +45,7 @@ show_usage() {
 }
 
 # ==========================================================
-# 核心处理函数 (V15 逻辑)
+# 核心处理函数 (V16 逻辑)
 # ==========================================================
 process_directory() {
     local TARGET_DIR="$1"
@@ -57,12 +57,16 @@ process_directory() {
         echo ""
     fi
     
+    # 1. 声明关联数组
     declare -A file_map
     log_info "（第1轮）正在扫描目标目录并建立索引..."
     log_info "目标: $TARGET_DIR"
 
+    # 遍历所有符合 '[*]*. ' 模式的文件
     for file_path in "$TARGET_DIR"/\[*\].*; do
+        # 只处理文件
         [ -f "$file_path" ] || continue
+        
         filename=$(basename "$file_path")
         tag=""
 
@@ -78,11 +82,13 @@ process_directory() {
             fi
         fi
 
-        # 步骤 3: 净化 "tag" (文件夹名称)
+        # 步骤 3: 净化 "tag" (文件夹名称) [V12]
         if [ -n "$tag" ]; then
+            # 移除 / \ : * ? " < > | 并移除开头和结尾的 .
             tag=$(echo "$tag" | sed -e 's|[/\\:*"<>|]||g' -e 's/\.*$//' -e 's/^\.*//')
         fi
 
+        # 存入 map
         if [ -n "$tag" ]; then
             existing_files=${file_map["$tag"]}
             if [ -z "$existing_files" ]; then
@@ -97,20 +103,21 @@ process_directory() {
     log_info "（第2轮）开始处理索引并移动文件..."
 
     local moved_count=0
-    declare -a unprocessed_tags
     
-    # [新功能 V15 - 方案一] 初始化报告数组
+    # [V15] 初始化报告数组
+    declare -a unprocessed_tags
     declare -a CREATED_DIRS=()
     declare -a UPDATED_DIRS=()
     declare -a SKIPPED_FILES=()
 
+    # 遍历所有提取到的 tag
     for tag in "${!file_map[@]}"; do
         
         IFS=$'\n' read -r -d '' -a files < <(printf '%s\0' "${file_map["$tag"]}")
         local count=${#files[@]}
         local DEST_FOLDER="$TARGET_DIR/$tag"
 
-        # V10 核心逻辑:
+        # 核心 V10 逻辑: (文件数 >= N) OR (文件夹已存在)
         if [ "$count" -ge $MIN_FILES_FOR_NEW_DIR ] || [ -d "$DEST_FOLDER" ]; then
             
             local mkdir_needed=false
@@ -118,16 +125,16 @@ process_directory() {
                 mkdir_needed=true
             fi
 
+            # [V15] 打印提示并填充报告数组
             if [ "$count" -ge $MIN_FILES_FOR_NEW_DIR ] && [ "$mkdir_needed" == "true" ]; then
                 echo "处理新文件夹: $DEST_FOLDER (共 $count 个文件)"
-                # [新功能 V15 - 方案一] 记录新创建的目录
                 CREATED_DIRS+=("$tag")
             else
                 echo "归档到已有文件夹: $DEST_FOLDER (共 $count 个文件)"
-                # [新功能 V15 - 方案一] 记录被更新的目录
                 UPDATED_DIRS+=("$tag")
             fi
 
+            # 创建文件夹
             if [ "$mkdir_needed" == "true" ]; then
                 if [ "$IS_DRY_RUN" == "true" ]; then
                     log_dryrun "将创建文件夹: $DEST_FOLDER"
@@ -136,12 +143,12 @@ process_directory() {
                 fi
             fi
             
-            # [新功能 V15 - 方案二] 安全移动逻辑
+            # [V15+V16] 循环处理文件 (安全移动)
             for file_to_move in "${files[@]}"; do
                 local filename_to_move=$(basename "$file_to_move")
                 local dest_file_path="$DEST_FOLDER/$filename_to_move"
                 
-                # 检查目标文件是否已存在
+                # [V15] 检查目标文件是否已存在
                 if [ -f "$dest_file_path" ]; then
                     # 如果已存在, 则跳过 (方案二), 并记录 (方案一)
                     if [ "$IS_DRY_RUN" == "true" ]; then
@@ -154,19 +161,26 @@ process_directory() {
                     # 目标不存在, 安全, 执行移动
                     if [ "$IS_DRY_RUN" == "true" ]; then
                         log_dryrun "  -> 移动 $filename_to_move 到 $DEST_FOLDER/"
+                        ((moved_count++))
                     else
                         echo "  -> 移动 $filename_to_move 到 $DEST_FOLDER/"
-                        mv -- "$file_to_move" "$DEST_FOLDER/"
+                        
+                        # [V16] 增加 "|| true" 来防止 "set -e" 在 mv 失败时终止脚本
+                        mv -- "$file_to_move" "$DEST_FOLDER/" || true
+                        
                         if [ $? -ne 0 ]; then
+                            # "mv" 失败 (例如 I/O 错误), 打印错误, 但脚本会继续
                             echo "  !!!! 错误: 移动 $filename_to_move 失败 (可能是I/O错误) !!!!"
+                        else
+                            # "mv" 成功
+                            ((moved_count++))
                         fi
                     fi
-                    # 只有真正移动(或准备移动)的文件才计数
-                    ((moved_count++))
                 fi
             done
             
         else
+            # 数量不足 (count=1) 且 文件夹不存在, 记录下来
             unprocessed_tags+=("$tag (数量: $count)")
         fi
     done
@@ -174,7 +188,7 @@ process_directory() {
     echo "------------------------------"
     log_info "操作完成。共移动 $moved_count 个文件。"
 
-    # [新功能 V15 - 方案一] 增强的最终报告
+    # [V15] 增强的最终报告
     echo ""
     echo -e "${BLUE}--- 总结报告 ---${NC}"
     
@@ -237,7 +251,7 @@ main() {
         esac
     done
 
-    # --- 交互式输入 (循环验证) ---
+    # --- [V14] 交互式输入 (循环验证) ---
     if [ -z "$TARGET_DIR" ]; then
         echo -e "${GREEN}=== 漫画分类脚本 (交互模式) ===${NC}"
         echo -e "未指定目标目录。"
