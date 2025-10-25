@@ -1,25 +1,21 @@
 cat > ~/fenlei.sh << 'EOF'
 #!/bin/bash
-set -e # 模仿 bf.sh，任何命令失败立即退出
+set -e # 任何命令失败立即退出
 
 # ==========================================================
-# 脚本全局配置 (模仿 bf.sh 顶部配置区)
+# 脚本全局配置
 # ==========================================================
-
-# 1. 默认设置 (方案一：交互式)
-DEFAULT_TARGET_DIR="/xiazai/rclone/移动云盘/漫画/h/mi"
-
-# 2. 核心逻辑配置 (方案三：提取魔法数字)
+# 核心逻辑配置
 MIN_FILES_FOR_NEW_DIR=2
 
 # ==========================================================
-# V10 的核心正则表达式 (保持不变)
+# 核心正则表达式 (保持不变)
 # ==========================================================
 RE_STEP_1='^\[([^]]+)\]'     # 匹配 [aaa] 或 [aaa(bbb)]
 RE_STEP_2='\(([^)]+)\)'     # 匹配 (bbb)
 
 # ==========================================================
-# 辅助函数 (模仿 bf.sh)
+# 辅助函数
 # ==========================================================
 
 # 颜色定义
@@ -33,7 +29,7 @@ NC='\033[0m' # 无颜色
 log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-log_dryrun() { echo -e "${BLUE}[试运行]${NC} $1"; } # (方案二：DryRun)
+log_dryrun() { echo -e "${BLUE}[试运行]${NC} $1"; }
 
 # 帮助/用法
 show_usage() {
@@ -61,42 +57,32 @@ process_directory() {
         echo ""
     fi
     
-    # 1. 声明一个关联数组 (哈希表)
     declare -A file_map
-
     log_info "（第1轮）正在扫描目标目录并建立索引..."
     log_info "目标: $TARGET_DIR"
 
-    # 遍历 *指定目录* 下所有符合 '[*]*. ' 模式的文件
     for file_path in "$TARGET_DIR"/\[*\].*; do
         [ -f "$file_path" ] || continue
         filename=$(basename "$file_path")
         tag=""
 
-        # 步骤 1: 绝对严格地只提取 *第一个* [ ... ] 之间的内容
+        # 步骤 1: 提取 [ ... ] 之间的内容
         if [[ "$filename" =~ $RE_STEP_1 ]]; then
             inner_content="${BASH_REMATCH[1]}"
             
-            # 步骤 2: 检查这个 inner_content 是否包含 (bbb) 格式
+            # 步骤 2: 检查是否包含 (bbb)
             if [[ "$inner_content" =~ $RE_STEP_2 ]]; then
-                tag="${BASH_REMATCH[1]}" # 规则 1 命中: 提取 (bbb)
+                tag="${BASH_REMATCH[1]}" # 规则 1: 提取 (bbb)
             else
-                tag="$inner_content" # 规则 2 命中: 使用 "aaa"
+                tag="$inner_content" # 规则 2: 使用 "aaa"
             fi
         fi
 
-        # =========================================================================
-        # *** [新功能 V12 - 已应用方案一] ***
         # 步骤 3: 净化 "tag" (文件夹名称), 移除所有无效字符
         if [ -n "$tag" ]; then
-            # 1. 移除 / \ : * ? " < > |
-            # 2. 移除结尾的一个或多个 . (例如 "Artist." -> "Artist")
-            # 3. 移除开头的一个或多个 . (防止创建隐藏文件夹)
             tag=$(echo "$tag" | sed -e 's|[/\\:*"<>|]||g' -e 's/\.*$//' -e 's/^\.*//')
         fi
-        # =========================================================================
 
-        # 如果成功提取到标签 ( "bbb" 或 "aaa" )
         if [ -n "$tag" ]; then
             existing_files=${file_map["$tag"]}
             if [ -z "$existing_files" ]; then
@@ -113,7 +99,6 @@ process_directory() {
     local moved_count=0
     declare -a unprocessed_tags
 
-    # 遍历所有被索引的标签
     for tag in "${!file_map[@]}"; do
         
         IFS=$'\n' read -r -d '' -a files < <(printf '%s\0' "${file_map["$tag"]}")
@@ -128,14 +113,12 @@ process_directory() {
                 mkdir_needed=true
             fi
 
-            # 打印提示语
             if [ "$count" -ge $MIN_FILES_FOR_NEW_DIR ] && [ "$mkdir_needed" == "true" ]; then
                 echo "处理新文件夹: $DEST_FOLDER (共 $count 个文件)"
             else
                 echo "归档到已有文件夹: $DEST_FOLDER (共 $count 个文件)"
             fi
 
-            # [方案二：DryRun] 检查是否需要创建文件夹
             if [ "$mkdir_needed" == "true" ]; then
                 if [ "$IS_DRY_RUN" == "true" ]; then
                     log_dryrun "将创建文件夹: $DEST_FOLDER"
@@ -144,14 +127,12 @@ process_directory() {
                 fi
             fi
             
-            # 遍历这个数组并移动所有文件
             for file_to_move in "${files[@]}"; do
                 local filename_to_move=$(basename "$file_to_move")
                 
-                # [方案二：DryRun] 检查移动操作
                 if [ "$IS_DRY_RUN" == "true" ]; then
                     log_dryrun "  -> 移动 $filename_to_move 到 $DEST_FOLDER/"
-                    ((moved_count++)) # 在试运行时也计数，使报告准确
+                    ((moved_count++))
                 else
                     echo "  -> 移动 $filename_to_move 到 $DEST_FOLDER/"
                     mv -- "$file_to_move" "$DEST_FOLDER/"
@@ -164,7 +145,6 @@ process_directory() {
             done
             
         else
-            # 数量不足 (count=1) 且 文件夹不存在, 记录下来
             unprocessed_tags+=("$tag (数量: $count)")
         fi
     done
@@ -184,16 +164,16 @@ process_directory() {
 }
 
 # ==========================================================
-# 脚本主入口 (模仿 bf.sh 的 main)
+# 脚本主入口 (V14 修改)
 # ==========================================================
 main() {
     local TARGET_DIR=""
     local IS_DRY_RUN="false"
 
-    # --- 方案一：参数解析 ---
+    # --- 参数解析 ---
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -n|--dry-run) # (方案二：DryRun)
+            -n|--dry-run)
                 IS_DRY_RUN="true"
                 shift
                 ;;
@@ -207,30 +187,40 @@ main() {
                 exit 1
                 ;;
             *)
-                # 假设这是目标目录
                 if [ -n "$TARGET_DIR" ]; then
                     log_error "只能指定一个目标目录。"
                     show_usage
                     exit 1
                 fi
-                # 移除路径末尾的斜杠(如果存在)
                 TARGET_DIR="${1%/}"
                 shift
                 ;;
         esac
     done
 
-    # --- 方案一：交互式输入 ---
+    # --- [V14 修改] 交互式输入 (循环验证) ---
     if [ -z "$TARGET_DIR" ]; then
         echo -e "${GREEN}=== 漫画分类脚本 (交互模式) ===${NC}"
         echo -e "未指定目标目录。"
-        read -rp "请输入要整理的目录 (默认为: $DEFAULT_TARGET_DIR): " input_dir
-        TARGET_DIR="${input_dir:-$DEFAULT_TARGET_DIR}"
-        # 再次移除路径末尾的斜杠
-        TARGET_DIR="${TARGET_DIR%/}"
+        
+        while true; do
+            read -rp "请输入要整理的目录: " input_dir
+            TARGET_DIR="${input_dir%/}" # 获取输入并移除结尾斜杠
+
+            if [ -z "$TARGET_DIR" ]; then
+                log_error "路径不能为空，请重新输入:"
+            elif [ ! -d "$TARGET_DIR" ]; then
+                log_error "错误: 目标目录不存在!"
+                log_error "请检查路径: $TARGET_DIR (或重新输入)"
+            else
+                # 路径有效, 退出循环
+                break
+            fi
+        done
     fi
 
-    # --- 检查路径 ---
+    # --- 检查路径 (此检查现在只对 *参数模式* 有效) ---
+    # (交互模式已在上面的 while 循环中验证)
     if [ ! -d "$TARGET_DIR" ]; then
         log_error "错误: 目标目录不存在!"
         log_error "请检查路径: $TARGET_DIR"
@@ -241,6 +231,6 @@ main() {
     process_directory "$TARGET_DIR" "$IS_DRY_RUN"
 }
 
-# 启动脚本 (模仿 bf.sh)
+# 启动脚本
 main "$@"
 EOF
