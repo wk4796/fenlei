@@ -5,7 +5,7 @@
 
 # --- 配置 ---
 # !!! 重要: 请将下面的 URL 替换为您自己 GitHub 仓库中 fenlei.sh 的 Raw 链接 !!!
-SOURCE_URL="https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/fenlei.sh"
+SOURCE_URL="https://raw.githubusercontent.com/wk4796/fenlei/main/fenlei.sh"
 # !!! 重要: 请将上面的 URL 替换为您自己 GitHub 仓库中 fenlei.sh 的 Raw 链接 !!!
 
 DEST_FILE="fenlei.sh"
