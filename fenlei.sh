@@ -20,10 +20,9 @@ echo "（第1轮）正在扫描目标目录并建立索引..."
 echo "目标: $TARGET_DIR"
 
 # =========================================================================
-# 核心提取逻辑 (V9 - 最终修正版)
+# 核心提取逻辑 (V9/V10 修正版)
 #
-# *** 修正(V9): 将正则表达式放入变量中. ***
-# 这是解决 "unexpected token `)`" 语法错误
+# 将正则表达式放入变量中, 这是解决 "unexpected token `)`" 语法错误
 # 和 "regex被当作字符串" 匹配错误的
 # 唯一正确方法.
 # =========================================================================
@@ -44,28 +43,26 @@ for file_path in "$TARGET_DIR"/\[*\].*; do
     tag=""
 
     # 步骤 1: 绝对严格地只提取 *第一个* [ ... ] 之间的内容
-    # *** 修正(V9): 使用变量, 且 *不带引号* ***
+    # *** 使用变量, 且 *不带引号* ***
     if [[ "$filename" =~ $RE_STEP_1 ]]; then
         
         # inner_content 现在是 "aaa(bbb)" 或者 "aaa"
         inner_content="${BASH_REMATCH[1]}"
         
         # 步骤 2: 检查这个 inner_content 是否包含 (bbb) 格式
-        # *** 修正(V9): 使用变量, 且 *不带引号* ***
+        # *** 使用变量, 且 *不带引号* ***
         if [[ "$inner_content" =~ $RE_STEP_2 ]]; then
             # 规则 1 命中: 提取 (bbb)
-            # 例如 "ピロコボ (Piro)" 匹配成功, 提取 "Piro"
             tag="${BASH_REMATCH[1]}"
         else
             # 规则 2 命中: 使用 "aaa"
-            # 例如 "ひなづか凉" 匹配失败, 使用 "ひなづか凉"
             tag="$inner_content"
         fi
     fi
     # =========================================================================
 
 
-    # 如果成功提取到标签 ( "Piro" 或 "ひなづか凉" )
+    # 如果成功提取到标签 ( "bbb" 或 "aaa" )
     if [ -n "$tag" ]; then
         # 将此文件的完整路径追加到该标签的“列表”中
         existing_files=${file_map["$tag"]}
@@ -96,17 +93,31 @@ for tag in "${!file_map[@]}"; do
     # 获取文件数量
     count=${#files[@]}
     
-    # 检查数量是否大于等于2
-    if [ "$count" -ge 2 ]; then
-        
-        # 目标文件夹路径
-        DEST_FOLDER="$TARGET_DIR/$tag"
+    # =========================================================================
+    # *** 核心逻辑修改 (V10) ***
+    #
+    # 提前定义目标文件夹路径
+    DEST_FOLDER="$TARGET_DIR/$tag"
+    
+    # 新规则:
+    # 1. 如果文件数 >= 2 (批量创建新文件夹)
+    #    或者 (||)
+    # 2. 如果目标文件夹已经存在 (归档单个文件)
+    #
+    if [ "$count" -ge 2 ] || [ -d "$DEST_FOLDER" ]; then
+    # =========================================================================
         
         # 使用 mkdir -p 确保目标文件夹存在
+        # (如果已存在, 会静默跳过)
         mkdir -p "$DEST_FOLDER"
         
         # 提示语
-        echo "处理文件夹: $DEST_FOLDER (共 $count 个文件)"
+        if [ "$count" -ge 2 ]; then
+            echo "处理新文件夹: $DEST_FOLDER (共 $count 个文件)"
+        else
+            # 这种情况一定是 [ -d "$DEST_FOLDER" ] 为 true
+            echo "归档到已有文件夹: $DEST_FOLDER (共 $count 个文件)"
+        fi
         
         # 遍历这个数组并移动所有文件
         for file_to_move in "${files[@]}"; do
@@ -123,7 +134,7 @@ for tag in "${!file_map[@]}"; do
         done
         
     else
-        # 数量不足, 记录下来
+        # 数量不足 (count=1) 且 文件夹不存在, 记录下来
         unprocessed_tags+=("$tag (数量: $count)")
     fi
 done
@@ -133,7 +144,7 @@ echo "操作完成。共移动 $moved_count 个文件。"
 
 # 打印出那些没有被移动的标签
 echo "---"
-echo "以下标签因文件数量不足2个而未被处理:"
+echo "以下标签因文件数量不足且文件夹不存在而未被处理:"
 if [ ${#unprocessed_tags[@]} -eq 0 ]; then
     echo "  (无)"
 else
