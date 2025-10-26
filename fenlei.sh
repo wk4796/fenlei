@@ -1,4 +1,3 @@
-cat > ~/fenlei.sh << 'EOF'
 #!/bin/bash
 # [V18 修改] 彻底移除了 'set -e'
 # 脚本现在将依赖内置的错误检查，以防止 I/O 错误导致脚本异常退出。
@@ -62,7 +61,10 @@ process_directory() {
     log_info "（第1轮）正在扫描目标目录并建立索引..."
     log_info "目标: $TARGET_DIR"
 
-    for file_path in "$TARGET_DIR"/\[*\].*; do
+    # [!!! 已修复 !!!] 
+    # 将原来的 "/\[*\].*" 修改为 "/\[*\]*" 
+    # 以匹配像 "[英丸] ... 1.7z" 这样在 "]" 和 "." 之间有额外文本的文件。
+    for file_path in "$TARGET_DIR"/\[*\]*; do
         [ -f "$file_path" ] || continue
         filename=$(basename "$file_path")
         tag=""
@@ -277,4 +279,3 @@ main() {
 
 # 启动脚本
 main "$@"
-EOF
