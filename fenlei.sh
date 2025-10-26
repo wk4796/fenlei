@@ -1,14 +1,18 @@
 #!/bin/bash
 # [V18 修改] 彻底移除了 'set -e'
-# 脚本现在将依赖内置的错误检查，以防止 I/O 错误导致脚本异常退出。
 # [V19 修改] 
 # 1. (性能) 增加了标签净化缓存 (tag_sanitize_cache)
 # 2. (鲁棒性) 使用 NULL 字节分隔符和 mapfile 来处理 file_map
+# [V20 修改]
+# 1. (交互) 交互模式下增加对 "最小文件数" 阈值的临时设置
+# 2. (核心) process_directory 接收阈值作为参数
+# [V21 修改]
+# 1. (交互) 移除了交互模式下两个提示之间的空行
 
 # ==========================================================
 # 脚本全局配置
 # ==========================================================
-# 核心逻辑配置: 必须满 N 个文件才会创建 *新* 文件夹
+# 核心逻辑配置: 必须满 N 个文件才会创建 *新* 文件夹 (这是默认值)
 MIN_FILES_FOR_NEW_DIR=2
 
 # ==========================================================
@@ -48,11 +52,13 @@ show_usage() {
 }
 
 # ==========================================================
-# 核心处理函数 (V19 逻辑)
+# 核心处理函数 (V20 逻辑)
 # ==========================================================
+# [V20] 增加第3个参数 $3 (effective_min_files)
 process_directory() {
     local TARGET_DIR="$1"
     local IS_DRY_RUN="$2"
+    local effective_min_files="$3" # [V20] 使用传入的阈值
 
     if [ "$IS_DRY_RUN" == "true" ]; then
         log_warn "--- 试运行模式 (DRY RUN) 已激活 ---"
@@ -66,6 +72,7 @@ process_directory() {
     
     log_info "（第1轮）正在扫描目标目录并建立索引..."
     log_info "目标: $TARGET_DIR"
+    log_info "生效阈值: 本次运行将为至少有 $effective_min_files 个文件的标签创建新目录。"
 
     # [!!! 已修复 !!!] 
     # 将原来的 "/\[*\].*" 修改为 "/\[*\]*" 
@@ -142,14 +149,16 @@ process_directory() {
         local count=${#files[@]}
         local DEST_FOLDER="$TARGET_DIR/$tag"
 
-        if [ "$count" -ge $MIN_FILES_FOR_NEW_DIR ] || [ -d "$DEST_FOLDER" ]; then
+        # [V20] 使用 $effective_min_files 替代 $MIN_FILES_FOR_NEW_DIR
+        if [ "$count" -ge $effective_min_files ] || [ -d "$DEST_FOLDER" ]; then
             
             local mkdir_needed=false
             if [ ! -d "$DEST_FOLDER" ]; then
                 mkdir_needed=true
             fi
 
-            if [ "$count" -ge $MIN_FILES_FOR_NEW_DIR ] && [ "$mkdir_needed" == "true" ]; then
+            # [V20] 使用 $effective_min_files 替代 $MIN_FILES_FOR_NEW_DIR
+            if [ "$count" -ge $effective_min_files ] && [ "$mkdir_needed" == "true" ]; then
                 echo "处理新文件夹: $DEST_FOLDER (共 $count 个文件)"
                 CREATED_DIRS+=("$tag")
             else
@@ -174,7 +183,6 @@ process_directory() {
             
             for file_to_move in "${files[@]}"; do
                 # [V19] 修复: 确保 file_to_move 不为空
-                # (mapfile 在某些情况下可能产生空元素, 尽管这里不太可能)
                 [ -n "$file_to_move" ] || continue
             
                 local filename_to_move=$(basename "$file_to_move")
@@ -246,11 +254,15 @@ process_directory() {
 }
 
 # ==========================================================
-# 脚本主入口 (V14 逻辑)
+# 脚本主入口 (V21 逻辑)
 # ==========================================================
 main() {
     local TARGET_DIR=""
     local IS_DRY_RUN="false"
+    
+    # [V20] 定义一个本地变量来存储本次运行的阈值
+    # 它首先被设为全局默认值
+    local local_min_files=$MIN_FILES_FOR_NEW_DIR
 
     # --- 参数解析 ---
     while [[ $# -gt 0 ]]; do
@@ -280,11 +292,12 @@ main() {
         esac
     done
 
-    # --- [V14] 交互式输入 (循环验证) ---
+    # --- [V21] 增强的交互式输入 (移除了空行) ---
     if [ -z "$TARGET_DIR" ]; then
         echo -e "${GREEN}=== 漫画分类脚本 (交互模式) ===${NC}"
         echo -e "未指定目标目录。"
         
+        # 1. 循环获取有效目录
         while true; do
             read -rp "请输入要整理的目录: " input_dir
             TARGET_DIR="${input_dir%/}" # 获取输入并移除结尾斜杠
@@ -299,7 +312,33 @@ main() {
                 break
             fi
         done
-    fi
+        
+        # [V21] 移除了这里的 echo "" 
+        
+        # [V20] 2. 循环获取有效的阈值
+        while true; do
+            # 提示时显示当前的默认值
+            read -rp "请输入创建新文件夹的最小文件数 (默认: $local_min_files): " input_threshold
+            
+            # 正则表达式: 匹配 1 或更大的整数
+            local re_valid_int='^[1-9][0-9]*$' 
+
+            if [ -z "$input_threshold" ]; then
+                # 用户直接按回车, 使用默认值, 退出循环
+                log_info "使用默认阈值: $local_min_files"
+                break
+            elif [[ "$input_threshold" =~ $re_valid_int ]]; then
+                # 用户输入了有效数字
+                local_min_files="$input_threshold"
+                log_info "本次运行阈值已设置为: $local_min_files"
+                break
+            else
+                # 用户输入了无效内容 (如 0, "abc", -5)
+                log_error "输入无效。请输入一个大于 0 的整数，或直接按回车使用默认值。"
+            fi
+        done
+        
+    fi # 结束交互模式 (if [ -z "$TARGET_DIR" ])
 
     # --- 检查路径 (此检查现在只对 *参数模式* 有效) ---
     if [ ! -d "$TARGET_DIR" ]; then
@@ -309,7 +348,8 @@ main() {
     fi
 
     # --- 执行核心逻辑 ---
-    process_directory "$TARGET_DIR" "$IS_DRY_RUN"
+    # [V20] 将 $local_min_files 作为第3个参数传递
+    process_directory "$TARGET_DIR" "$IS_DRY_RUN" "$local_min_files"
 }
 
 # 启动脚本
