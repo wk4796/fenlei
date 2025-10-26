@@ -9,6 +9,8 @@ source <(curl -sL https://raw.githubusercontent.com/wk4796/fenlei/main/install_f
 ### 脚本别名为：`fenlei`
 直接输入`fenlei`就可以进入脚本
 
+---
+
 # fenlei.sh - 漫画自动分类脚本 📂
 
 ![Made with Bash](https://img.shields.io/badge/Made%20with-Bash-blue.svg)
