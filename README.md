@@ -53,11 +53,11 @@ source <(curl -sL https://raw.githubusercontent.com/wk4796/fenlei/main/install_f
     * 文件将被移动到: `[目标目录]/Bob/`
 ---
 **示例:**
-# 对 /mnt/comics 目录进行试运行 (Dry Run)
+**对 /mnt/comics 目录进行试运行 (Dry Run)**
 ```bash
 ./fenlei.sh -n /mnt/comics
 ```
-# 实际执行整理
+**实际执行整理**
 ```bash
 ./fenlei.sh /mnt/comics
 ```
