@@ -1,13 +1,20 @@
 #!/bin/bash
 # [V18 修改] 彻底移除了 'set -e'
-# [V19 修改] 
-# 1. (性能) 增加了标签净化缓存 (tag_sanitize_cache)
-# 2. (鲁棒性) 使用 NULL 字节分隔符和 mapfile 来处理 file_map
-# [V20 修改]
-# 1. (交互) 交互模式下增加对 "最小文件数" 阈值的临时设置
-# 2. (核心) process_directory 接收阈值作为参数
-# [V21 修改]
-# 1. (交互) 移除了交互模式下两个提示之间的空行
+# [V19 修改] (已回滚) 试图使用 \0 导致了 V22 的 bug
+# [V20 修改] 交互式阈值
+# [V21 修改] 移除了交互空行
+# [V22 修改]
+# 1. (性能) 第1轮扫描从 for 循环升级为 'find' + 'while read' 循环
+# 2. (功能) 增加交互式递归选项
+# [V23 修改]
+# 1. [!!! 严重 BUG 修复 !!!] Bash 变量无法存储 \0, 导致 V22 中 file_map 路径被错误拼接。
+# 2. (修复) 回滚 V19 的 \0 逻辑, 恢复使用 \n (换行符) 作为 file_map 和 mapfile 的分隔符。
+# [V24 修改]
+# 1. [!!! 语法错误修复 !!!] 修复了 V23 中引入的 'if { ... } fi' 语法错误。
+# [V25 修改]
+# 1. (交互) 优化了递归提示, 使其明确说明回车的默认行为。
+# [V26 修改]
+# 1. (交互) 根据您的要求, 进一步将 "递归" 替换为 "扫描子文件夹"。
 
 # ==========================================================
 # 脚本全局配置
@@ -52,13 +59,13 @@ show_usage() {
 }
 
 # ==========================================================
-# 核心处理函数 (V20 逻辑)
+# 核心处理函数 (V24 逻辑)
 # ==========================================================
-# [V20] 增加第3个参数 $3 (effective_min_files)
 process_directory() {
     local TARGET_DIR="$1"
     local IS_DRY_RUN="$2"
-    local effective_min_files="$3" # [V20] 使用传入的阈值
+    local effective_min_files="$3" # [V20]
+    local IS_RECURSIVE="$4"        # [V22]
 
     if [ "$IS_DRY_RUN" == "true" ]; then
         log_warn "--- 试运行模式 (DRY RUN) 已激活 ---"
@@ -72,13 +79,20 @@ process_directory() {
     
     log_info "（第1轮）正在扫描目标目录并建立索引..."
     log_info "目标: $TARGET_DIR"
-    log_info "生效阈值: 本次运行将为至少有 $effective_min_files 个文件的标签创建新目录。"
+    log_info "生效阈值: $effective_min_files"
+    
+    # [V22] 根据 $IS_RECURSIVE 动态设置 find 命令
+    local find_args=("$TARGET_DIR")
+    if [ "$IS_RECURSIVE" == "true" ]; then
+        log_info "扫描模式: ${GREEN}开启扫描子文件夹${NC} (将扫描所有子目录)"
+    else
+        log_info "扫描模式: ${RED}关闭扫描子文件夹${NC} (仅扫描顶层目录)"
+        find_args+=("-maxdepth" "1")
+    fi
 
-    # [!!! 已修复 !!!] 
-    # 将原来的 "/\[*\].*" 修改为 "/\[*\]*" 
-    # 以匹配像 "[英丸] ... 1.7z" 这样在 "]" 和 "." 之间有额外文本的文件。
-    for file_path in "$TARGET_DIR"/\[*\]*; do
-        [ -f "$file_path" ] || continue
+    # [V23] 修复: 切换回 \n 分隔
+    while IFS= read -r file_path; do
+        
         filename=$(basename "$file_path")
         tag=""
 
@@ -95,23 +109,15 @@ process_directory() {
         fi
 
         # 步骤 3: 净化 "tag" (文件夹名称)
+        # [V24] 修复: V23 'if {' 语法错误
         if [ -n "$tag" ]; then
-            # [V19] 性能优化: 使用缓存
             local raw_tag="$tag"
-            
-            # 检查 key 是否存在于缓存中 (使用 Bash 4.0+ 兼容的检查方式)
             if [[ -n "${tag_sanitize_cache[$raw_tag]+exists}" ]]; then
-                # 命中缓存
                 tag="${tag_sanitize_cache[$raw_tag]}"
             else
-                # 未命中缓存, 执行净化
                 local sanitized_tag
                 sanitized_tag=$(echo "$raw_tag" | sed -e 's|[/\\:*"<>|]||g' -e 's/\.*$//' -e 's/^\.*//')
-                
-                # 存入缓存 (即使 $sanitized_tag 为空)
                 tag_sanitize_cache["$raw_tag"]="$sanitized_tag"
-                
-                # 更新 tag 变量
                 tag="$sanitized_tag"
             fi
         fi
@@ -122,12 +128,13 @@ process_directory() {
             if [ -z "$existing_files" ]; then
                 file_map["$tag"]="$file_path"
             else
-                # [V19] 鲁棒性强化: 使用 NULL 字节 (\0) 作为分隔符
-                # 这可以安全处理文件名中包含换行符等极端情况
-                file_map["$tag"]="$existing_files"$'\0'"$file_path"
+                # [V23] 修复: 恢复使用 \n (换行符)
+                file_map["$tag"]="$existing_files"$'\n'"$file_path"
             fi
         fi
-    done
+    # [V23] 修复: 'find' 使用默认的 -print (换行符分隔)
+    done < <(find "${find_args[@]}" -type f -name '\[*\]*' -print)
+    # [V22] 'find' 循环结束
 
     log_info "索引完成。"
     log_info "（第2轮）开始处理索引并移动文件..."
@@ -140,16 +147,14 @@ process_directory() {
 
     for tag in "${!file_map[@]}"; do
         
-        # [V19] 鲁棒性强化: 使用 mapfile 和 NULL 字节分隔符
-        # (替代 V18 的 IFS/read 逻辑)
-        # 这要求 Bash 4.0+ (脚本中的 declare -A 也需要 Bash 4.0+)
+        # [V23] 修复: 移除 mapfile 的 -d '\0' 选项
         local files=()
-        mapfile -t -d $'\0' files < <(printf '%s' "${file_map["$tag"]}")
+        mapfile -t files < <(printf '%s' "${file_map["$tag"]}")
         
         local count=${#files[@]}
         local DEST_FOLDER="$TARGET_DIR/$tag"
 
-        # [V20] 使用 $effective_min_files 替代 $MIN_FILES_FOR_NEW_DIR
+        # [V20] 使用 $effective_min_files
         if [ "$count" -ge $effective_min_files ] || [ -d "$DEST_FOLDER" ]; then
             
             local mkdir_needed=false
@@ -157,7 +162,7 @@ process_directory() {
                 mkdir_needed=true
             fi
 
-            # [V20] 使用 $effective_min_files 替代 $MIN_FILES_FOR_NEW_DIR
+            # [V20] 使用 $effective_min_files
             if [ "$count" -ge $effective_min_files ] && [ "$mkdir_needed" == "true" ]; then
                 echo "处理新文件夹: $DEST_FOLDER (共 $count 个文件)"
                 CREATED_DIRS+=("$tag")
@@ -166,23 +171,22 @@ process_directory() {
                 UPDATED_DIRS+=("$tag")
             fi
 
+            # [V24] 修复: V23 'if {' 语法错误
             if [ "$mkdir_needed" == "true" ]; then
                 if [ "$IS_DRY_RUN" == "true" ]; then
                     log_dryrun "将创建文件夹: $DEST_FOLDER"
                 else
-                    # [V18] 对 mkdir 进行错误检查 (不使用 set -e)
                     mkdir -p "$DEST_FOLDER"
                     local mkdir_status=$?
                     if [ $mkdir_status -ne 0 ]; then
                         log_error "!!!! 严重错误: 创建目录 $DEST_FOLDER 失败 (可能是I/O错误) !!!!"
                         log_error "跳过此标签下的所有文件..."
-                        continue # 跳到下一个 tag
+                        continue
                     fi
                 fi
             fi
             
             for file_to_move in "${files[@]}"; do
-                # [V19] 修复: 确保 file_to_move 不为空
                 [ -n "$file_to_move" ] || continue
             
                 local filename_to_move=$(basename "$file_to_move")
@@ -202,15 +206,12 @@ process_directory() {
                     else
                         echo "  -> 移动 $filename_to_move 到 $DEST_FOLDER/"
                         
-                        # [V18] 对 mv 进行错误检查 (不使用 set -e)
                         mv -- "$file_to_move" "$DEST_FOLDER/"
                         local mv_status=$?
                         
                         if [ $mv_status -ne 0 ]; then
-                            # "mv" 失败 (例如 I/O 错误), 打印错误, 但脚本会继续
                             echo "  !!!! 错误: 移动 $filename_to_move 失败 (可能是I/O错误) !!!!"
                         else
-                            # "mv" 成功
                             ((moved_count++))
                         fi
                     fi
@@ -254,15 +255,16 @@ process_directory() {
 }
 
 # ==========================================================
-# 脚本主入口 (V21 逻辑)
+# 脚本主入口 (V26 逻辑)
 # ==========================================================
 main() {
     local TARGET_DIR=""
     local IS_DRY_RUN="false"
     
-    # [V20] 定义一个本地变量来存储本次运行的阈值
-    # 它首先被设为全局默认值
+    # [V20]
     local local_min_files=$MIN_FILES_FOR_NEW_DIR
+    # [V22]
+    local local_is_recursive="false"
 
     # --- 参数解析 ---
     while [[ $# -gt 0 ]]; do
@@ -292,7 +294,7 @@ main() {
         esac
     done
 
-    # --- [V21] 增强的交互式输入 (移除了空行) ---
+    # --- [V26] 增强的交互式输入 ---
     if [ -z "$TARGET_DIR" ]; then
         echo -e "${GREEN}=== 漫画分类脚本 (交互模式) ===${NC}"
         echo -e "未指定目标目录。"
@@ -300,7 +302,7 @@ main() {
         # 1. 循环获取有效目录
         while true; do
             read -rp "请输入要整理的目录: " input_dir
-            TARGET_DIR="${input_dir%/}" # 获取输入并移除结尾斜杠
+            TARGET_DIR="${input_dir%/}"
 
             if [ -z "$TARGET_DIR" ]; then
                 log_error "路径不能为空，请重新输入:"
@@ -308,7 +310,6 @@ main() {
                 log_error "错误: 目标目录不存在!"
                 log_error "请检查路径: $TARGET_DIR (或重新输入)"
             else
-                # 路径有效, 退出循环
                 break
             fi
         done
@@ -317,30 +318,35 @@ main() {
         
         # [V20] 2. 循环获取有效的阈值
         while true; do
-            # 提示时显示当前的默认值
             read -rp "请输入创建新文件夹的最小文件数 (默认: $local_min_files): " input_threshold
             
-            # 正则表达式: 匹配 1 或更大的整数
             local re_valid_int='^[1-9][0-9]*$' 
 
             if [ -z "$input_threshold" ]; then
-                # 用户直接按回车, 使用默认值, 退出循环
                 log_info "使用默认阈值: $local_min_files"
                 break
             elif [[ "$input_threshold" =~ $re_valid_int ]]; then
-                # 用户输入了有效数字
                 local_min_files="$input_threshold"
                 log_info "本次运行阈值已设置为: $local_min_files"
                 break
             else
-                # 用户输入了无效内容 (如 0, "abc", -5)
                 log_error "输入无效。请输入一个大于 0 的整数，或直接按回车使用默认值。"
             fi
         done
         
+        # [V26] 3. 询问是否扫描子文件夹 (清晰版)
+        read -rp "是否扫描子文件夹? (输入 'y' 开启，按回车键默认关闭): " input_recursive
+        if [[ "$input_recursive" == "y" || "$input_recursive" == "Y" ]]; then
+            local_is_recursive="true"
+            log_info "扫描子文件夹已${GREEN}开启${NC}。"
+        else
+            log_info "扫描子文件夹已${RED}关闭${NC} (默认)。"
+        fi
+        
+        
     fi # 结束交互模式 (if [ -z "$TARGET_DIR" ])
 
-    # --- 检查路径 (此检查现在只对 *参数模式* 有效) ---
+    # --- 检查路径 ---
     if [ ! -d "$TARGET_DIR" ]; then
         log_error "错误: 目标目录不存在!"
         log_error "请检查路径: $TARGET_DIR"
@@ -348,8 +354,8 @@ main() {
     fi
 
     # --- 执行核心逻辑 ---
-    # [V20] 将 $local_min_files 作为第3个参数传递
-    process_directory "$TARGET_DIR" "$IS_DRY_RUN" "$local_min_files"
+    # [V22]
+    process_directory "$TARGET_DIR" "$IS_DRY_RUN" "$local_min_files" "$local_is_recursive"
 }
 
 # 启动脚本
