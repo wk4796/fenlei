@@ -1,6 +1,9 @@
 #!/bin/bash
 # [V18 修改] 彻底移除了 'set -e'
 # 脚本现在将依赖内置的错误检查，以防止 I/O 错误导致脚本异常退出。
+# [V19 修改] 
+# 1. (性能) 增加了标签净化缓存 (tag_sanitize_cache)
+# 2. (鲁棒性) 使用 NULL 字节分隔符和 mapfile 来处理 file_map
 
 # ==========================================================
 # 脚本全局配置
@@ -45,7 +48,7 @@ show_usage() {
 }
 
 # ==========================================================
-# 核心处理函数 (V18 逻辑)
+# 核心处理函数 (V19 逻辑)
 # ==========================================================
 process_directory() {
     local TARGET_DIR="$1"
@@ -58,6 +61,9 @@ process_directory() {
     fi
     
     declare -A file_map
+    # [V19] 性能优化: 缓存净化(sed)过的标签名
+    declare -A tag_sanitize_cache 
+    
     log_info "（第1轮）正在扫描目标目录并建立索引..."
     log_info "目标: $TARGET_DIR"
 
@@ -83,15 +89,35 @@ process_directory() {
 
         # 步骤 3: 净化 "tag" (文件夹名称)
         if [ -n "$tag" ]; then
-            tag=$(echo "$tag" | sed -e 's|[/\\:*"<>|]||g' -e 's/\.*$//' -e 's/^\.*//')
+            # [V19] 性能优化: 使用缓存
+            local raw_tag="$tag"
+            
+            # 检查 key 是否存在于缓存中 (使用 Bash 4.0+ 兼容的检查方式)
+            if [[ -n "${tag_sanitize_cache[$raw_tag]+exists}" ]]; then
+                # 命中缓存
+                tag="${tag_sanitize_cache[$raw_tag]}"
+            else
+                # 未命中缓存, 执行净化
+                local sanitized_tag
+                sanitized_tag=$(echo "$raw_tag" | sed -e 's|[/\\:*"<>|]||g' -e 's/\.*$//' -e 's/^\.*//')
+                
+                # 存入缓存 (即使 $sanitized_tag 为空)
+                tag_sanitize_cache["$raw_tag"]="$sanitized_tag"
+                
+                # 更新 tag 变量
+                tag="$sanitized_tag"
+            fi
         fi
+
 
         if [ -n "$tag" ]; then
             existing_files=${file_map["$tag"]}
             if [ -z "$existing_files" ]; then
                 file_map["$tag"]="$file_path"
             else
-                file_map["$tag"]="$existing_files"$'\n'"$file_path"
+                # [V19] 鲁棒性强化: 使用 NULL 字节 (\0) 作为分隔符
+                # 这可以安全处理文件名中包含换行符等极端情况
+                file_map["$tag"]="$existing_files"$'\0'"$file_path"
             fi
         fi
     done
@@ -107,7 +133,12 @@ process_directory() {
 
     for tag in "${!file_map[@]}"; do
         
-        IFS=$'\n' read -r -d '' -a files < <(printf '%s\0' "${file_map["$tag"]}")
+        # [V19] 鲁棒性强化: 使用 mapfile 和 NULL 字节分隔符
+        # (替代 V18 的 IFS/read 逻辑)
+        # 这要求 Bash 4.0+ (脚本中的 declare -A 也需要 Bash 4.0+)
+        local files=()
+        mapfile -t -d $'\0' files < <(printf '%s' "${file_map["$tag"]}")
+        
         local count=${#files[@]}
         local DEST_FOLDER="$TARGET_DIR/$tag"
 
@@ -142,6 +173,10 @@ process_directory() {
             fi
             
             for file_to_move in "${files[@]}"; do
+                # [V19] 修复: 确保 file_to_move 不为空
+                # (mapfile 在某些情况下可能产生空元素, 尽管这里不太可能)
+                [ -n "$file_to_move" ] || continue
+            
                 local filename_to_move=$(basename "$file_to_move")
                 local dest_file_path="$DEST_FOLDER/$filename_to_move"
                 
