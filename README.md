@@ -51,12 +51,12 @@ source <(curl -sL https://raw.githubusercontent.com/wk4796/fenlei/main/install_f
     * 文件将被移动到: `[目标目录]/Bob/`
 ---
 **示例:**
-
-```bash
 # 对 /mnt/comics 目录进行试运行 (Dry Run)
+```bash
 ./fenlei.sh -n /mnt/comics
-
+```
 # 实际执行整理
+```bash
 ./fenlei.sh /mnt/comics
 ```
 
@@ -65,7 +65,7 @@ source <(curl -sL https://raw.githubusercontent.com/wk4796/fenlei/main/install_f
   * `-n`, `--dry-run`: 试运行。只打印操作，不移动文件。
   * `-h`, `--help`: 显示帮助信息。
 
-### 3\. 交互模式 (推荐)
+### 交互模式 (推荐)
 
 **最简单**的用法是**不带任何参数**直接运行脚本：
 
