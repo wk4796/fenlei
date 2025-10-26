@@ -50,7 +50,8 @@ source <(curl -sL https://raw.githubusercontent.com/wk4796/fenlei/main/install_f
     * 提取的标签: `Bob`
     * 文件将被移动到: `[目标目录]/Bob/`
 
-    **示例:**
+
+**示例:**
 
 ```bash
 # 对 /mnt/comics 目录进行试运行 (Dry Run)
