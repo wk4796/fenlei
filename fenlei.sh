@@ -353,10 +353,10 @@ main() {
                 local_min_files="$input_threshold"
                 break
             fi
-            log_error "请输入有效的正整数。"
+            log_error "输入无效。请输入一个大于 0 的整数，或直接按回车使用默认值。"
         done
         
-        read -rp "是否扫描子文件夹? (y/n, 默认不扫描): " input_recursive
+        read -rp "是否扫描子文件夹? (输入 'y' 开启，按回车键默认关闭): " input_recursive
         if [[ "$input_recursive" == "y" || "$input_recursive" == "Y" ]]; then
             local_is_recursive="true"
             log_info "已开启递归扫描 (包含空目录自动清理)。"
