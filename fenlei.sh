@@ -337,7 +337,7 @@ main() {
     done
 
     if [ -z "$TARGET_DIR" ]; then
-        echo -e "${GREEN}=== 漫画分类脚本 (V27 增强版) ===${NC}"
+        echo -e "${GREEN}=== 漫画分类脚本 ===${NC}"
         
         while true; do
             read -rp "请输入要整理的目录: " input_dir
